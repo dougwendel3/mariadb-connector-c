@@ -18,8 +18,22 @@ IF(SKIP_TESTS)
 ENDIF()
 
 ENABLE_TESTING()
+SET(ENABLE_TLS_TEST 0)
 
 find_package (Python3 COMPONENTS Interpreter)
+IF (${Python3_FOUND})
+  MESSAGE(STATUS "Checking python modules")
+  EXECUTE_PROCESS(
+    COMMAND ${Python3_EXECUTABLE} -c "import OpenSSL"
+    RESULT_VARIABLE PyModule_FOUND
+    OUTPUT_QUIET)
+  IF(NOT ${PyModule_FOUND} EQUAL 0)
+    MESSAGE("Module OpenSSL not found")
+  ELSE()
+    MESSAGE("Module OpenSSL found")
+    SET(ENABLE_TLS_TEST 1)
+  ENDIF()
+ENDIF()
 
 INCLUDE_DIRECTORIES(${CC_SOURCE_DIR}/include
                     ${CC_BINARY_DIR}/include
@@ -52,13 +66,23 @@ ENDIF()
 
 ADD_LIBRARY(ma_getopt ma_getopt.c)
 
-IF(${Python3_FOUND})
+IF(${ENABLE_TLS_TEST} EQUAL 1)
   CONFIGURE_FILE(${CC_SOURCE_DIR}/unittest/libmariadb/tls.c.in
                  ${CC_BINARY_DIR}/unittest/libmariadb/tls.c)
+  CONFIGURE_FILE(${CC_SOURCE_DIR}/unittest/libmariadb/tls_server.py.in
+                 ${CC_BINARY_DIR}/unittest/libmariadb/tls_server.py)
 
   ADD_EXECUTABLE(tls ${CC_BINARY_DIR}/unittest/libmariadb/tls.c)
   TARGET_LINK_LIBRARIES(tls cctap ma_getopt mariadbclient)
   ADD_TEST(tls ${EXECUTABLE_OUTPUT_PATH}/tls)
+
+  SET(ADDITIONAL_FILES "certs/server-cert.pem"
+                     "certs/server-cert.crl" "certs/server-key.pem" "certs/cacert.pem")
+  FOREACH(FILE ${ADDITIONAL_FILES})
+    CONFIGURE_FILE(${CC_SOURCE_DIR}/unittest/libmariadb/${FILE}
+                   ${CC_BINARY_DIR}/unittest/libmariadb/${FILE}
+                   COPYONLY)
+  ENDFOREACH()
 ENDIF()
 
 FOREACH(API_TEST ${API_TESTS})
@@ -78,13 +102,5 @@ ENDFOREACH(API_TEST)
 FOREACH(API_TEST ${MANUAL_TESTS})
   ADD_EXECUTABLE(${API_TEST} ${API_TEST}.c)
   TARGET_LINK_LIBRARIES(${API_TEST} cctap ma_getopt mariadbclient)
-ENDFOREACH()
-
-SET(ADDITIONAL_FILES "tls_server.py" "certs/server-cert.pem"
-                     "certs/server-cert.crl" "certs/server-key.pem" "certs/cacert.pem")
-FOREACH(FILE ${ADDITIONAL_FILES})
-  CONFIGURE_FILE(${CC_SOURCE_DIR}/unittest/libmariadb/${FILE}
-                 ${CC_BINARY_DIR}/unittest/libmariadb/${FILE}
-                 COPYONLY)
 ENDFOREACH()
 

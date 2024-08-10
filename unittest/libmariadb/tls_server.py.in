@@ -10,16 +10,18 @@ class TlsServer():
     def __init__(self, *args, **kwargs):
         self.host= kwargs.pop("host", "127.0.0.1")
         self.port= kwargs.pop("port", 50000)
+        self.timeout= kwargs.pop("timeout", 20);
         self.server= None
+        self.context= None
         self.end= False
 
         try:
             self.server= socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server.settimeout(self.timeout)
             self.server.bind((self.host, self.port))
             print("# tls dummy_server started: ", self.host, self.port)
             self.server.listen()
         except Exception as e:
-            print("Couldn't start tls_server")
             print(e)
 
     def check_server(self):
@@ -50,9 +52,9 @@ class TlsServer():
                       serialNumber=123,
                       validityStartInSeconds=0,
                       validityEndInSeconds=10*365*24*60*60,
-                      KEY_FILE = "privkey.pem",
-                      CRL_FILE = "selfsigned.crl",
-                      CERT_FILE="selfsigned.pem"):
+                      KEY_FILE = "@CC_BINARY_DIR@/unittest/libmariadb/privkey.pem",
+                      CRL_FILE = "@CC_BINARY_DIR@/unittest/libmariadb/selfsigned.crl",
+                      CERT_FILE="@CC_BINARY_DIR@/unittest/libmariadb/selfsigned.pem"):
 
 
         self.key_file= KEY_FILE
@@ -109,27 +111,35 @@ class TlsServer():
 
     def run(self):
         while not self.end:
-            connection, address= self.accept()
-            print("# new connection")
-            self.send_server_hello(connection)
-            reply= connection.recv(4096)
+            try:
+                connection, address= self.accept()
+                print("# new connection")
+                self.send_server_hello(connection)
+                reply= connection.recv(4096)
+            except Exception as e:
+                print(e)
+                connection.close()
+                print("exiting")
+                exit(1);
             if reply[:4] == b'CMD:':
                 if self.set_tls_context(reply[4:]):
                     connection.sendall(b'OK')
             elif reply[:4] == b'QUIT':
                 print("# exiting tls_dummy_server")
-                try:
-                    connection.close()
-                except:
-                    pass
-                return
+                connection.close()
+                exit(1);
             else:
+                if not self.context:
+                    self.generate_cert(create_new=True)
+                    self.set_tls_context("")
                 try:
-                    tls_sock= self.context.wrap_socket(connection, server_side=True)
+                    tls_sock= self.context.wrap_socket(connection, server_side=True, do_handshake_on_connect=False)
+                    tls_sock.do_handshake()
+                    tls_sock.close()
                 except Exception as e:
                     print("error occured")
                     print(e)
-                    connection.close()
+                    tls_sock.close()
             connection.close()
 
 # Hardcoded server hello packet (captured from MariaDB Server 11.4.2)

@@ -108,7 +108,7 @@ static int test_start_tls_server(MYSQL *my __attribute__((unused)))
   PROCESS_INFORMATION pi;
   char szCmdline[1024];
 
-  snprintf(szCmdline, sizeof(szCmdline), "%s tls_server.py --host=%s --port=%d", "@Python3_EXECUTABLE@", tls_dummy_host, tls_dummy_port);
+  snprintf(szCmdline, sizeof(szCmdline), "%s %s/unittest/libmariadb/tls_server.py --host=%s --port=%d", "@Python3_EXECUTABLE@", "@CC_BINARY_DIR@", tls_dummy_host, tls_dummy_port);
 
   ZeroMemory(&si, sizeof(si));
   ZeroMemory(&pi, sizeof(pi));
@@ -305,7 +305,7 @@ end:
   return rc;
 }
 
-static int test_fp(MYSQL *my __attribute__((unused)))
+static int test_fp1(MYSQL *my __attribute__((unused)))
 {
   unsigned int hash_size[3] = {256, 384, 512};
   int i;
@@ -341,6 +341,40 @@ static int test_fp(MYSQL *my __attribute__((unused)))
   mysql_close(mysql);
   return OK;
 }
+
+static int test_fp2(MYSQL *my __attribute__((unused)))
+{
+  unsigned int hash_size[3] = {256, 384, 512};
+  int i;
+  my_bool verify= 0;
+  MYSQL *mysql= mysql_init(NULL);
+
+  /* Don't verify peer certificate */
+  mysql_optionsv(mysql, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify);
+
+  FAIL_IF(!my_test_connect(mysql, hostname, username, password, schema,
+                         port, socketname, 0, 1), mysql_error(my));
+
+  for (i=0; i < 3; i++)
+  {
+    MYSQL *mysql1= mysql_init(NULL);
+    MARIADB_X509_INFO *info;
+
+    diag("testing SHA%d fingerprint", hash_size[i]);
+
+    mariadb_get_infov(mysql, MARIADB_TLS_PEER_CERT_INFO, &info, hash_size[i]);
+
+    mysql_optionsv(mysql1, MARIADB_OPT_SSL_FP, info->fingerprint);
+    FAIL_IF(!my_test_connect(mysql1, hostname, username, password, schema,
+                             port, socketname, 0, 0), mysql_error(my));
+
+    FAIL_IF(!mysql_get_ssl_cipher(mysql), "No TLS connection");
+    mysql_close(mysql1);
+  }
+  mysql_close(mysql);
+  return OK;
+}
+
 
 static int test_fp_colon(MYSQL *my __attribute__((unused)))
 {
@@ -587,7 +621,7 @@ static int test_crl(MYSQL *my __attribute__((unused)))
   MYSQL *mysql;
 
   /* Set validity in future */
-  if (set_tls_dummy_options("CMD:KEY_FILE='./certs/server-key.pem' CERT_FILE='./certs/server-cert.pem'"))
+  if (set_tls_dummy_options("CMD:KEY_FILE='@CC_BINARY_DIR@/unittest/libmariadb/certs/server-key.pem' CERT_FILE='@CC_BINARY_DIR@/unittest/libmariadb/certs/server-cert.pem'"))
   {
     diag("Error when setting TLS options");
     return FAIL;
@@ -595,8 +629,10 @@ static int test_crl(MYSQL *my __attribute__((unused)))
 
   mysql= mysql_init(NULL);
 
-  mysql_optionsv(mysql, MYSQL_OPT_SSL_CRL, "./certs/server-cert.crl");
-  mysql_ssl_set(mysql, NULL, NULL, "./certs/cacert.pem", NULL, NULL);
+  mysql_optionsv(mysql, MYSQL_OPT_SSL_CRL, "@CC_BINARY_DIR@/unittest/libmariadb/certs/server-cert.crl");
+#ifdef HAVE_SCHANNEL
+  mysql_ssl_set(mysql, NULL, NULL, "@CC_BINARY_DIR@/unittest/libmariadb/certs/cacert.pem", NULL, NULL);
+#endif
 
   if (my_test_connect(mysql, tls_dummy_host, "tlsuser", "foo", NULL, tls_dummy_port, NULL, 0, 0))
   {
@@ -615,7 +651,7 @@ static int test_crl_with_fp(MYSQL *my __attribute__((unused)))
   const char *fp= "4B:EE:BB:12:6D:30:1A:B2:2A:4A:F8:6D:82:7F:63:44:1F:8F:F4:6B:D3:F2:CA:68:0B:D5:E3:5D:1C:47:A7:16";
 
   /* Set validity in future */
-  if (set_tls_dummy_options("CMD:KEY_FILE='./certs/server-key.pem' CERT_FILE='./certs/server-cert.pem'"))
+  if (set_tls_dummy_options("CMD:KEY_FILE='@CC_BINARY_DIR@/unittest/libmariadb/certs/server-key.pem' CERT_FILE='@CC_BINARY_DIR@/unittest/libmariadb/certs/server-cert.pem'"))
   {
     diag("Error when setting TLS options");
     return FAIL;
@@ -624,8 +660,8 @@ static int test_crl_with_fp(MYSQL *my __attribute__((unused)))
   mysql= mysql_init(NULL);
   mysql_optionsv(mysql, MARIADB_OPT_SSL_FP, fp);
 
-  mysql_optionsv(mysql, MYSQL_OPT_SSL_CRL, "./certs/server-cert.crl");
-  mysql_ssl_set(mysql, NULL, NULL, "./certs/cacert.pem", NULL, NULL);
+  mysql_optionsv(mysql, MYSQL_OPT_SSL_CRL, "@CC_BINARY_DIR@/unittest/libmariadb/certs/server-cert.crl");
+  mysql_ssl_set(mysql, NULL, NULL, "@CC_BINARY_DIR@/unittest/libmariadb/certs/cacert.pem", NULL, NULL);
 
   if (my_test_connect(mysql, tls_dummy_host, "tlsuser", "foo", NULL, tls_dummy_port, NULL, 0, 0))
   {
@@ -651,7 +687,7 @@ static int test_wrong_hostname(MYSQL *my __attribute__((unused)))
 
   mysql= mysql_init(NULL);
 
-  mysql_ssl_set(mysql, NULL, NULL, "./selfsigned.pem", NULL, NULL);
+  mysql_ssl_set(mysql, NULL, NULL, "@CC_BINARY_DIR@/unittest/libmariadb/selfsigned.pem", NULL, NULL);
 
   if (my_test_connect(mysql, tls_dummy_host, "tlsuser", "foo", NULL, tls_dummy_port, NULL, 0, 0))
   {
@@ -660,6 +696,40 @@ static int test_wrong_hostname(MYSQL *my __attribute__((unused)))
   }
   CHECK_TLS_FLAGS(mysql, MARIADB_TLS_VERIFY_HOST, "Host name validation flag not set")
   mysql_close(mysql);
+  return OK;
+}
+
+static int test_tls_version(MYSQL *my __attribute__((unused)))
+{
+  const char *tls_version[]= {"TLSv1.1", "TLSv1.2", "TLSv1.3", NULL};
+  int i=0;
+  char *version= NULL;
+
+  while (tls_version[i])
+  {
+    my_bool verify= 0;
+    MYSQL *mysql= mysql_init(NULL);
+    mysql_ssl_set(mysql, NULL, NULL, NULL, NULL, NULL);
+    mysql_optionsv(mysql, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify);
+    mysql_optionsv(mysql, MARIADB_OPT_TLS_VERSION, tls_version[i]);
+
+    diag("testing %s", tls_version[i]);
+
+    if (my_test_connect(mysql, hostname, username, password, schema,
+                        port, socketname, 0, 0))
+    {
+      mariadb_get_infov(mysql, MARIADB_CONNECTION_TLS_VERSION, &version);
+
+      if (strcmp(version, tls_version[i]))
+      {
+        diag("expected %s, got %s", tls_version[i], version);
+        mysql_close(mysql);
+        return FAIL;
+      }
+    }
+    mysql_close(mysql);
+    i++;
+  }
   return OK;
 }
 
@@ -678,13 +748,15 @@ struct my_tests_st my_tests[] = {
   {"test_start_tls_server", test_start_tls_server, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_init", test_init, TEST_CONNECTION_NONE, 0, NULL, NULL},
   /* Here you can add more tests */
+  {"test_tls_version", test_tls_version, TEST_CONNECTION_NEW, 0, NULL, NULL},
   {"test_cert_expired", test_cert_expired, TEST_CONNECTION_NEW, 0, NULL, NULL},
   {"test_pw_check", test_pw_check, TEST_CONNECTION_NEW, 0, NULL, NULL},
   {"test_ca_cert_check", test_ca_cert_check, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_fp_garbage", test_fp_garbage, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_peer_cert_info_fp", test_peer_cert_info_fp, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_no_cert_check", test_no_cert_check, TEST_CONNECTION_NONE, 0, NULL, NULL},
-  {"test_fp", test_fp, TEST_CONNECTION_NONE, 0, NULL, NULL},
+  {"test_fp1", test_fp1, TEST_CONNECTION_NONE, 0, NULL, NULL},
+  {"test_fp2", test_fp2, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_fp_colon", test_fp_colon, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_wrong_ca", test_wrong_ca, TEST_CONNECTION_NONE, 0, NULL, NULL},
   {"test_wrong_hostname", test_wrong_hostname, TEST_CONNECTION_NONE, 0, NULL, NULL},
